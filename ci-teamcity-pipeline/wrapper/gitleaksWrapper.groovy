@@ -2,7 +2,7 @@
 
 // Import the scanner class
 // Note: We're using a direct path reference instead of package import for simplicity
-def scannerClass = new GroovyClassLoader().parseClass(new File("../buildSrc/sharedlib/security/GitLeaksScanner.groovy"))
+def scannerClass = new GroovyClassLoader().parseClass(new File("../buildSrc/sharedlib/GitLeaksScanner.groovy"))
 
 /**
  * Main wrapper script for GitLeaks scanning
