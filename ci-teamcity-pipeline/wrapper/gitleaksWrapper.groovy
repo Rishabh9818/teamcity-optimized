@@ -5,24 +5,70 @@
  * This wrapper script is designed to be called from TeamCity with parameters
  */
 
-// Load the GitLeaksScanner class
-def loadGitLeaksScanner() {
-    // First try to find the file relative to current script
+// Find GitLeaksScanner.groovy file
+def findScannerFile() {
     def scriptDir = new File(getClass().protectionDomain.codeSource.location.path).parent
-    def scannerPath = new File("${scriptDir}/../buildSrc/sharedlib/security/GitLeaksScanner.groovy")
+    def possiblePaths = [
+        "${scriptDir}/../buildSrc/security/GitLeaksScanner.groovy",
+        "${scriptDir}/../buildSrc/sharedlib/security/GitLeaksScanner.groovy"
+    ]
     
-    if (!scannerPath.exists()) {
-        // Try with absolute path from project root
-        def projectRoot = new File(System.getProperty("teamcity.build.checkoutDir", "."))
-        scannerPath = new File("${projectRoot}/ci-teamcity-pipeline/buildSrc/sharedlib/security/GitLeaksScanner.groovy")
-        
-        if (!scannerPath.exists()) {
-            throw new FileNotFoundException("Cannot find GitLeaksScanner.groovy file. Looked in: ${scannerPath.absolutePath}")
+    // Try to add project root paths if teamcity.build.checkoutDir is defined
+    def projectRoot = System.getProperty("teamcity.build.checkoutDir", null)
+    if (projectRoot) {
+        possiblePaths.add("${projectRoot}/ci-teamcity-pipeline/buildSrc/security/GitLeaksScanner.groovy")
+        possiblePaths.add("${projectRoot}/ci-teamcity-pipeline/buildSrc/sharedlib/security/GitLeaksScanner.groovy")
+    }
+    
+    // Try each path
+    for (path in possiblePaths) {
+        def file = new File(path)
+        if (file.exists()) {
+            println "[INFO] Found scanner at: ${file.absolutePath}"
+            return file
         }
     }
     
-    println "[INFO] Loading scanner from: ${scannerPath.absolutePath}"
-    return new GroovyShell().parse(scannerPath)
+    throw new FileNotFoundException("Cannot find GitLeaksScanner.groovy file. Searched in: ${possiblePaths.join(', ')}")
+}
+
+/**
+ * Compiles and loads security.GitLeaksScanner class
+ */
+def loadGitLeaksScanner() {
+    def file = findScannerFile()
+    
+    // Create a separate class loader that includes the parent directory as well
+    def parentDir = file.parentFile.parentFile.parentFile  // Navigate up to buildSrc or sharedlib
+    def urls = [parentDir.toURI().toURL()] as URL[]
+    def classLoader = new URLClassLoader(urls, this.class.classLoader)
+    
+    // Load the source code
+    def sourceCode = file.text
+    
+    // Compile the class
+    def config = new CompilerConfiguration()
+    def shell = new GroovyShell(classLoader, new Binding(), config)
+    shell.evaluate(sourceCode)
+    
+    // Now try to load the class
+    try {
+        def scannerClass = classLoader.loadClass("security.GitLeaksScanner")
+        return scannerClass
+    } catch (ClassNotFoundException e) {
+        println "[ERROR] Failed to load security.GitLeaksScanner: ${e.message}"
+        
+        // Try alternative approach using reflection
+        println "[INFO] Attempting alternative class loading approach..."
+        for (Class<?> c : shell.getClassLoader().getLoadedClasses()) {
+            if (c.getName().endsWith("GitLeaksScanner")) {
+                println "[INFO] Found class: ${c.getName()}"
+                return c
+            }
+        }
+        
+        throw new ClassNotFoundException("Could not load GitLeaksScanner class")
+    }
 }
 
 /**
@@ -35,7 +81,7 @@ def loadGitLeaksScanner() {
  * @return boolean indicating scan success or failure
  */
 def scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
-    def scanner = loadGitLeaksScanner()
+    def scannerClass = loadGitLeaksScanner()
     
     println "[INFO] Starting GitLeaks scan with parameters:"
     println "  Repository URL: ${repoUrl}"
@@ -43,8 +89,8 @@ def scan(String repoUrl, String configPath, String reportPath, boolean verbose =
     println "  Report Path: ${reportPath}"
     println "  Verbose Mode: ${verbose}"
     
-    // Invoke the scan method from the loaded class
-    return scanner.scan(repoUrl, configPath, reportPath, verbose)
+    // Invoke the static scan method from the loaded class
+    return scannerClass.scan(repoUrl, configPath, reportPath, verbose)
 }
 
 // When executed directly (not imported)
