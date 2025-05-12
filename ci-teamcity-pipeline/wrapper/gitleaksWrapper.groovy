@@ -38,7 +38,7 @@ def call(Map params) {
  */
 def loadScanner() {
     def projectRoot = System.getProperty("teamcity.build.checkoutDir", ".")
-    def scannerPath = "${projectRoot}/ci-teamcity-pipeline/buildSrc/security/GitLeaksScanner.groovy"
+    def scannerPath = "${projectRoot}/ci-teamcity-pipeline/buildSrc/sharedlib/security/GitLeaksScanner.groovy"
     def scannerFile = new File(scannerPath)
     
     if (!scannerFile.exists()) {
