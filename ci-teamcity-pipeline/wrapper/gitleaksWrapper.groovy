@@ -1,87 +1,24 @@
 #!/usr/bin/env groovy
 
 /**
- * Main wrapper script for GitLeaks scanning
- * This wrapper script is designed to be called from TeamCity with parameters
+ * GitLeaks wrapper for TeamCity integration
+ * Follows Jenkins shared library pattern
  */
 
-// Find GitLeaksScanner.groovy file
-def findScannerFile() {
-    def scriptDir = new File(getClass().protectionDomain.codeSource.location.path).parent
-    def possiblePaths = [
-        "${scriptDir}/../buildSrc/security/GitLeaksScanner.groovy",
-        "${scriptDir}/../buildSrc/sharedlib/security/GitLeaksScanner.groovy"
-    ]
-    
-    // Try to add project root paths if teamcity.build.checkoutDir is defined
-    def projectRoot = System.getProperty("teamcity.build.checkoutDir", null)
-    if (projectRoot) {
-        possiblePaths.add("${projectRoot}/ci-teamcity-pipeline/buildSrc/security/GitLeaksScanner.groovy")
-        possiblePaths.add("${projectRoot}/ci-teamcity-pipeline/buildSrc/sharedlib/security/GitLeaksScanner.groovy")
-    }
-    
-    // Try each path
-    for (path in possiblePaths) {
-        def file = new File(path)
-        if (file.exists()) {
-            println "[INFO] Found scanner at: ${file.absolutePath}"
-            return file
-        }
-    }
-    
-    throw new FileNotFoundException("Cannot find GitLeaksScanner.groovy file. Searched in: ${possiblePaths.join(', ')}")
-}
+// Import required classes
+import groovy.lang.GroovyShell
+import org.codehaus.groovy.control.CompilerConfiguration
 
 /**
- * Compiles and loads security.GitLeaksScanner class
+ * Main entry point that will be called from TeamCity
+ * Following the pattern similar to Jenkins Shared Library
  */
-def loadGitLeaksScanner() {
-    def file = findScannerFile()
-    
-    // Create a separate class loader that includes the parent directory as well
-    def parentDir = file.parentFile.parentFile.parentFile  // Navigate up to buildSrc or sharedlib
-    def urls = [parentDir.toURI().toURL()] as URL[]
-    def classLoader = new URLClassLoader(urls, this.class.classLoader)
-    
-    // Load the source code
-    def sourceCode = file.text
-    
-    // Compile the class
-    def config = new CompilerConfiguration()
-    def shell = new GroovyShell(classLoader, new Binding(), config)
-    shell.evaluate(sourceCode)
-    
-    // Now try to load the class
-    try {
-        def scannerClass = classLoader.loadClass("security.GitLeaksScanner")
-        return scannerClass
-    } catch (ClassNotFoundException e) {
-        println "[ERROR] Failed to load security.GitLeaksScanner: ${e.message}"
-        
-        // Try alternative approach using reflection
-        println "[INFO] Attempting alternative class loading approach..."
-        for (Class<?> c : shell.getClassLoader().getLoadedClasses()) {
-            if (c.getName().endsWith("GitLeaksScanner")) {
-                println "[INFO] Found class: ${c.getName()}"
-                return c
-            }
-        }
-        
-        throw new ClassNotFoundException("Could not load GitLeaksScanner class")
-    }
-}
-
-/**
- * Call GitLeaksScanner scan method with provided parameters
- * 
- * @param repoUrl URL of the repository to scan
- * @param configPath Path to the GitLeaks configuration file (optional)
- * @param reportPath Path where the scan report will be generated
- * @param verbose Enable verbose logging
- * @return boolean indicating scan success or failure
- */
-def scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
-    def scannerClass = loadGitLeaksScanner()
+def call(Map params) {
+    // Default parameters
+    def repoUrl = params.repoUrl ?: ""
+    def configPath = params.configPath ?: null
+    def reportPath = params.reportPath ?: "./gitleaks-report.json"
+    def verbose = params.verbose ?: false
     
     println "[INFO] Starting GitLeaks scan with parameters:"
     println "  Repository URL: ${repoUrl}"
@@ -89,27 +26,52 @@ def scan(String repoUrl, String configPath, String reportPath, boolean verbose =
     println "  Report Path: ${reportPath}"
     println "  Verbose Mode: ${verbose}"
     
-    // Invoke the static scan method from the loaded class
-    return scannerClass.scan(repoUrl, configPath, reportPath, verbose)
+    // Import the GitLeaksScanner class
+    def scanner = loadScanner()
+    
+    // Invoke the scan method
+    return scanner.scan(repoUrl, configPath, reportPath, verbose)
 }
 
-// When executed directly (not imported)
+/**
+ * Locate and load the GitLeaksScanner class
+ */
+def loadScanner() {
+    def projectRoot = System.getProperty("teamcity.build.checkoutDir", ".")
+    def scannerPath = "${projectRoot}/ci-teamcity-pipeline/buildSrc/security/GitLeaksScanner.groovy"
+    def scannerFile = new File(scannerPath)
+    
+    if (!scannerFile.exists()) {
+        throw new FileNotFoundException("GitLeaksScanner.groovy not found at: ${scannerPath}")
+    }
+    
+    println "[INFO] Found scanner at: ${scannerFile.absolutePath}"
+    
+    // Load the GitLeaksScanner class directly
+    Class.forName("security.GitLeaksScanner")
+    
+    // Return the class as an object that can be used
+    return new security.GitLeaksScanner()
+}
+
+// When executed directly from command line
 if (this.getClass().getName() == 'gitleaksWrapper') {
-    // Validate input arguments
+    // Parse command line arguments
     if (args.length < 2) {
         println "Usage: groovy gitleaksWrapper.groovy <git-url> <report-path> [config-path] [--verbose]"
         System.exit(1)
         return
     }
 
-    // Parse arguments
-    def gitUrl = args[0]
-    def reportPath = args[1]
-    def configPath = (args.length > 2 && args[2] != "null") ? args[2] : null
-    def verboseFlag = (args.contains("--verbose"))
+    def params = [
+        repoUrl: args[0],
+        reportPath: args[1],
+        configPath: (args.length > 2 && args[2] != "null") ? args[2] : null,
+        verbose: args.contains("--verbose")
+    ]
 
-    // Call the scan method
-    def result = scan(gitUrl, configPath, reportPath, verboseFlag)
+    // Call main method
+    def result = call(params)
     
     // Exit with appropriate status code
     System.exit(result ? 0 : 1)
