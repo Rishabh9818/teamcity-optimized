@@ -14,7 +14,7 @@ class GitLeaksScanner {
      * @param verbose Enable verbose logging
      * @return boolean indicating scan success or failure
      */
-    static boolean scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
+    boolean scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
         // Create a temporary directory for cloning
         def cloneDir = File.createTempDir("gitleaks-scan-", "")
         
@@ -34,7 +34,7 @@ class GitLeaksScanner {
             e.printStackTrace()
             return false
         } finally {
-            // Clean up temporary clone directory
+            // Clean up temporary directory
             cloneDir.deleteDir()
         }
     }
@@ -46,7 +46,7 @@ class GitLeaksScanner {
      * @param targetDir Directory to clone into
      * @return boolean indicating success or failure
      */
-    private static boolean cloneRepository(String repoUrl, String targetDir) {
+    private boolean cloneRepository(String repoUrl, String targetDir) {
         def cloneCommand = ["git", "clone", "--depth", "1", repoUrl, targetDir]
         println "[DEBUG] Executing clone: ${cloneCommand.join(' ')}"
         
@@ -72,21 +72,22 @@ class GitLeaksScanner {
      * @param verbose Enable verbose output
      * @return boolean indicating success or failure
      */
-    private static boolean runGitLeaksScan(String scanDir, String configPath, String reportPath, boolean verbose) {
+    private boolean runGitLeaksScan(String scanDir, String configPath, String reportPath, boolean verbose) {
         // Prepare GitLeaks command
         def command = [
             "gitleaks", "detect",
             "--path=${scanDir}",
             "--report=${reportPath}",
             "--format=json",
-            "--no-git",
-            "--debug"
+            "--no-git"
         ]
         
         // Add optional parameters
         if (verbose) {
             command << "--verbose"
+            command << "--debug"
         }
+        
         if (configPath && new File(configPath).exists()) {
             command << "--config-path=${configPath}"
         }
@@ -112,7 +113,7 @@ class GitLeaksScanner {
      * @param reportPath Path to the report file
      * @return boolean True if no leaks found, false otherwise
      */
-    private static boolean validateScanResults(String reportPath) {
+    private boolean validateScanResults(String reportPath) {
         def reportFile = new File(reportPath)
         if (!reportFile.exists()) {
             println "[ERROR] Report file was not generated"
@@ -127,5 +128,11 @@ class GitLeaksScanner {
             println "[SUCCESS] GitLeaks scan completed with no leaks."
             return true
         }
+    }
+
+    // Static method that creates an instance to maintain compatibility
+    static boolean scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
+        def scanner = new GitLeaksScanner()
+        return scanner.scan(repoUrl, configPath, reportPath, verbose)
     }
 }
