@@ -1,43 +1,70 @@
 #!/usr/bin/env groovy
 
-// Import the scanner class
-// Note: We're using a direct path reference instead of package import for simplicity
-def scannerClass = new GroovyClassLoader().parseClass(new File("../buildSrc/sharedlib/GitLeaksScanner.groovy"))
-
 /**
  * Main wrapper script for GitLeaks scanning
+ * This wrapper script is designed to be called from TeamCity with parameters
  */
-class GitLeaksWrapper {
-    static void main(String[] args) {
-        // Get reference to scanner class
-        def scanner = Class.forName("security.GitLeaksScanner")
+
+// Load the GitLeaksScanner class
+def loadGitLeaksScanner() {
+    // First try to find the file relative to current script
+    def scriptDir = new File(getClass().protectionDomain.codeSource.location.path).parent
+    def scannerPath = new File("${scriptDir}/../buildSrc/sharedlib/security/GitLeaksScanner.groovy")
+    
+    if (!scannerPath.exists()) {
+        // Try with absolute path from project root
+        def projectRoot = new File(System.getProperty("teamcity.build.checkoutDir", "."))
+        scannerPath = new File("${projectRoot}/ci-teamcity-pipeline/buildSrc/sharedlib/security/GitLeaksScanner.groovy")
         
-        // Validate input arguments
-        if (args.length < 3 || args.length > 4) {
-            println "Usage: groovy gitleaksWrapper.groovy <git-url> <config-path> <report-path> [--verbose]"
-            System.exit(1)
-            return
+        if (!scannerPath.exists()) {
+            throw new FileNotFoundException("Cannot find GitLeaksScanner.groovy file. Looked in: ${scannerPath.absolutePath}")
         }
-
-        // Parse arguments
-        def gitUrl = args[0]
-        def configPath = args[1] != "null" ? args[1] : null
-        def reportPath = args[2]
-        def verboseFlag = (args.length == 4 && args[3] == "--verbose")
-
-        println "[INFO] Starting GitLeaks scan with parameters:"
-        println "  Repository URL: ${gitUrl}"
-        println "  Config Path: ${configPath}"
-        println "  Report Path: ${reportPath}"
-        println "  Verbose Mode: ${verboseFlag}"
-
-        // Call the scanner's scan method
-        def result = scanner.scan(gitUrl, configPath, reportPath, verboseFlag)
-        
-        // Exit with appropriate status code
-        System.exit(result ? 0 : 1)
     }
+    
+    println "[INFO] Loading scanner from: ${scannerPath.absolutePath}"
+    return new GroovyShell().parse(scannerPath)
 }
 
-// Execute the wrapper
-GitLeaksWrapper.main(this.args)
+/**
+ * Call GitLeaksScanner scan method with provided parameters
+ * 
+ * @param repoUrl URL of the repository to scan
+ * @param configPath Path to the GitLeaks configuration file (optional)
+ * @param reportPath Path where the scan report will be generated
+ * @param verbose Enable verbose logging
+ * @return boolean indicating scan success or failure
+ */
+def scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
+    def scanner = loadGitLeaksScanner()
+    
+    println "[INFO] Starting GitLeaks scan with parameters:"
+    println "  Repository URL: ${repoUrl}"
+    println "  Config Path: ${configPath ?: 'null'}"
+    println "  Report Path: ${reportPath}"
+    println "  Verbose Mode: ${verbose}"
+    
+    // Invoke the scan method from the loaded class
+    return scanner.scan(repoUrl, configPath, reportPath, verbose)
+}
+
+// When executed directly (not imported)
+if (this.getClass().getName() == 'gitleaksWrapper') {
+    // Validate input arguments
+    if (args.length < 2) {
+        println "Usage: groovy gitleaksWrapper.groovy <git-url> <report-path> [config-path] [--verbose]"
+        System.exit(1)
+        return
+    }
+
+    // Parse arguments
+    def gitUrl = args[0]
+    def reportPath = args[1]
+    def configPath = (args.length > 2 && args[2] != "null") ? args[2] : null
+    def verboseFlag = (args.contains("--verbose"))
+
+    // Call the scan method
+    def result = scan(gitUrl, configPath, reportPath, verboseFlag)
+    
+    // Exit with appropriate status code
+    System.exit(result ? 0 : 1)
+}
