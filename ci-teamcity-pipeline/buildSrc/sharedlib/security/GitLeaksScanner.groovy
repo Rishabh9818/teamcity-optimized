@@ -1,4 +1,4 @@
-package security
+package sharedlib.security
 
 /**
  * GitLeaksScanner Class
@@ -6,15 +6,24 @@ package security
  */
 class GitLeaksScanner {
     /**
-     * Perform a GitLeaks security scan on a given repository
+     * Main method to perform a GitLeaks security scan
      * 
-     * @param repoUrl URL of the repository to scan
-     * @param configPath Path to the GitLeaks configuration file (optional)
-     * @param reportPath Path where the scan report will be generated
-     * @param verbose Enable verbose logging
+     * @param params Map of parameters for the scan
      * @return boolean indicating scan success or failure
      */
-    boolean scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
+    def scan(Map params) {
+        // Extract parameters with defaults
+        def repoUrl = params.repoUrl ?: ""
+        def configPath = params.configPath ?: null
+        def reportPath = params.reportPath ?: "./gitleaks-report.json"
+        def verbose = params.verbose ?: false
+        
+        println "[INFO] Starting GitLeaks scan with parameters:"
+        println "  Repository URL: ${repoUrl}"
+        println "  Config Path: ${configPath ?: 'null'}"
+        println "  Report Path: ${reportPath}"
+        println "  Verbose Mode: ${verbose}"
+        
         // Create a temporary directory for cloning
         def cloneDir = File.createTempDir("gitleaks-scan-", "")
         
@@ -31,6 +40,8 @@ class GitLeaksScanner {
             return runGitLeaksScan(cloneDir.absolutePath, configPath, reportPath, verbose)
         } catch (Exception e) {
             println "[ERROR] Exception occurred during scan: ${e.message}"
+            // Correct usage of the TeamCity service message
+            println "##teamcity[buildProblem description='GitLeaks scan failed: ${e.message.replace("'", "|'")}']"
             e.printStackTrace()
             return false
         } finally {
@@ -50,13 +61,20 @@ class GitLeaksScanner {
         def cloneCommand = ["git", "clone", "--depth", "1", repoUrl, targetDir]
         println "[DEBUG] Executing clone: ${cloneCommand.join(' ')}"
         
-        def cloneProcess = cloneCommand.execute()
-        def cloneOut = new StringBuffer()
-        def cloneErr = new StringBuffer()
-        cloneProcess.waitForProcessOutput(cloneOut, cloneErr)
-
-        if (cloneProcess.exitValue() != 0) {
-            println "[ERROR] Git clone failed:\n${cloneErr}"
+        def cloneProcess = new ProcessBuilder(cloneCommand)
+            .redirectErrorStream(true)
+            .start()
+        
+        // Capture and print output
+        def cloneReader = new BufferedReader(new InputStreamReader(cloneProcess.getInputStream()))
+        String cloneLine
+        while ((cloneLine = cloneReader.readLine()) != null) {
+            println(cloneLine)
+        }
+        
+        def exitCode = cloneProcess.waitFor()
+        if (exitCode != 0) {
+            println "[ERROR] Git clone failed with exit code: ${exitCode}"
             return false
         }
         
@@ -95,13 +113,22 @@ class GitLeaksScanner {
         println "[DEBUG] Executing: ${command.join(' ')}"
 
         // Execute GitLeaks scan
-        def process = command.execute()
-        def stdout = new StringBuffer()
-        def stderr = new StringBuffer()
-        process.waitForProcessOutput(stdout, stderr)
-
-        println "[OUTPUT]\n${stdout}"
-        if (stderr) println "[ERROR]\n${stderr}"
+        def process = new ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .start()
+        
+        // Capture and print output
+        def reader = new BufferedReader(new InputStreamReader(process.getInputStream()))
+        String line
+        while ((line = reader.readLine()) != null) {
+            println(line)
+        }
+        
+        def exitCode = process.waitFor()
+        if (exitCode != 0 && exitCode != 1) { // Exit code 1 could mean findings were detected
+            println "[ERROR] GitLeaks scan failed with exit code: ${exitCode}"
+            return false
+        }
 
         // Validate scan results
         return validateScanResults(reportPath)
@@ -123,16 +150,11 @@ class GitLeaksScanner {
         def reportContent = reportFile.text.trim()
         if (reportContent.startsWith("[") && reportContent.length() > 2) {
             println "[WARNING] GitLeaks scan found potential security issues. Check report at ${reportPath}."
+            println "##teamcity[buildProblem description='Security issues detected by GitLeaks scan']"
             return false
         } else {
             println "[SUCCESS] GitLeaks scan completed with no leaks."
             return true
         }
-    }
-
-    // Static method that creates an instance to maintain compatibility
-    static boolean scan(String repoUrl, String configPath, String reportPath, boolean verbose = false) {
-        def scanner = new GitLeaksScanner()
-        return scanner.scan(repoUrl, configPath, reportPath, verbose)
     }
 }
